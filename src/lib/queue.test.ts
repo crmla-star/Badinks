@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { describeMe, gamePhase, splitQueue } from './queue'
+import { describeMe, formatMatchup, gamePhase, splitQueue } from './queue'
 import type { Player, SessionState } from './types'
 
-const mk = (name: string, pos: number, state: Player['state'] = 'waiting'): Player => ({
-  id: name, name, state, queue_pos: pos, joined_at: '',
+const mk = (name: string, pos: number, state: Player['state'] = 'waiting', slot: number | null = null): Player => ({
+  id: name, name, state, queue_pos: pos, joined_at: '', games_played: 0, court_slot: slot,
 })
 
 const session = (over: Partial<SessionState['session']> = {}): SessionState['session'] => ({
   id: 's', code: 'ABCDEF', name: 'Test', status: 'open', is_paused: false,
-  round_count: 0, version: 1, created_at: '', ...over,
+  round_count: 0, rotation_mode: 'fair_random', version: 1, created_at: '', ...over,
 })
 
 describe('splitQueue', () => {
@@ -33,6 +33,13 @@ describe('splitQueue', () => {
     ])
     expect(v.upNext.map((p) => p.name)).toEqual(['I', 'A', 'B', 'C'])
     expect(v.waiting.map((p) => p.name)).toEqual(['D'])
+  })
+
+  it('orders players on court by team seat', () => {
+    const v = splitQueue([
+      mk('A', 1, 'playing', 3), mk('B', 2, 'playing', 1), mk('C', 3, 'playing', 4), mk('D', 4, 'playing', 2),
+    ])
+    expect(v.playing.map((p) => p.name)).toEqual(['B', 'D', 'A', 'C'])
   })
 
   it('handles an empty queue', () => {
@@ -88,5 +95,12 @@ describe('normalizeSupabaseUrl', async () => {
     expect(normalizeSupabaseUrl(undefined)).toBeNull()
     expect(normalizeSupabaseUrl('eyJhbGciOi')).toBeNull()
     expect(normalizeSupabaseUrl('not a url')).toBeNull()
+  })
+})
+
+describe('formatMatchup', () => {
+  it('shows two teams', () => {
+    expect(formatMatchup(['Ava', 'Ben', 'Cy', 'Dee'])).toBe('Ava & Ben vs Cy & Dee')
+    expect(formatMatchup(['Ava', 'Ben', 'Cy'])).toBe('Ava, Ben, Cy')
   })
 })

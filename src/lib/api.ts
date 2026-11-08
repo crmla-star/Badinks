@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { SessionState } from './types'
+import type { RotationMode, SessionState } from './types'
 
 const MESSAGES: Record<string, string> = {
   SESSION_NOT_FOUND: "We couldn't find that game. Check the code or link.",
@@ -76,6 +76,9 @@ export const api = {
 
   removePlayer: (code: string, key: string, playerId: string) =>
     rpc<void>('remove_player', { p_code: code, p_admin_key: key, p_player_id: playerId }),
+
+  setRotationMode: (code: string, key: string, mode: RotationMode) =>
+    rpc<void>('set_rotation_mode', { p_code: code, p_admin_key: key, p_mode: mode }),
 
   resetSession: (code: string, key: string) => rpc<void>('reset_session', { p_code: code, p_admin_key: key }),
 

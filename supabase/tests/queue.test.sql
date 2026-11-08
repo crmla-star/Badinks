@@ -55,6 +55,11 @@ select t.expect_error($$select public.create_session('   ', '1234')$$, 'INVALID_
 select r->>'code' as code, r->>'admin_key' as key
   from (select public.create_session('  Sunday   Dink ', '1234') r) x \gset
 select t.eq((select name from public.sessions where code = :'code'), 'Sunday Dink', 'session created, name normalized');
+select t.eq((select rotation_mode from public.sessions where code = :'code'), 'fair_random', 'new sessions default to fair random');
+select t.expect_error(format($$select public.set_rotation_mode(%L, 'nope', 'fifo')$$, :'code'), 'NOT_AUTHORIZED');
+select t.expect_error(format($$select public.set_rotation_mode(%L, %L, 'chaos')$$, :'code', :'key'), 'INVALID_MODE');
+-- the classic FIFO checks below use 4-off-4-on
+select public.set_rotation_mode(:'code', :'key', 'fifo');
 select t.eq(public.verify_organizer(:'code', :'key'), true, 'organizer key verifies');
 select t.eq(public.verify_organizer(:'code', 'wrong'), false, 'wrong key does not verify');
 
@@ -104,8 +109,10 @@ select public.remove_player(:'code', :'key', t.pid(:'code', 'F'));
 select t.eq(t.lineup(:'code'), 'E,G,H,Ava | I,J,A,B,C,D', 'removed playing player replaced by next in line');
 select public.remove_player(:'code', :'key', t.pid(:'code', 'F'));  -- second click: no-op
 select t.eq(t.lineup(:'code'), 'E,G,H,Ava | I,J,A,B,C,D', 'removing twice is harmless');
-select t.eq((select player_names from public.rounds r join public.sessions s on s.id = r.session_id
-              where s.code = :'code' and r.ended_at is null), array['E','G','H','Ava'], 'round history names updated');
+select t.eq((select array(select unnest(player_names) order by 1) from public.rounds r join public.sessions s on s.id = r.session_id
+              where s.code = :'code' and r.ended_at is null), array['Ava','E','G','H'], 'round history names updated');
+select t.eq((select array_agg(court_slot order by court_slot) from public.players p join public.sessions s on s.id = p.session_id
+              where s.code = :'code' and p.state = 'playing'), array[1,2,3,4]::smallint[], 'substitute took the empty seat');
 
 -- ---------- leave (own token only) ----------
 select t.expect_error(format($$select public.leave_queue(%L, %L, 'bad')$$, :'code', :'a_id'), 'NOT_AUTHORIZED');
@@ -126,6 +133,7 @@ select t.eq(t.lineup(:'code'), 'J,A,B,C | D,Ava,E,G,H,I', 'resumed: next four st
 
 -- ---------- waiting state with < 4 players ----------
 select r->>'code' as code2, r->>'admin_key' as key2 from (select public.create_session('Small', '1234') r) x \gset
+select public.set_rotation_mode(:'code2', :'key2', 'fifo');
 select public.join_queue(:'code2', n) from unnest(array['P','Q','R']) n;
 select t.expect_error(format($$select public.start_game(%L, %L)$$, :'code2', :'key2'), 'NOT_ENOUGH_PLAYERS');
 select t.expect_error(format($$select public.start_game(%L, %L)$$, :'code2', :'key'), 'NOT_AUTHORIZED');
@@ -136,8 +144,63 @@ select t.eq(t.lineup(:'code2'), 'P,Q,R,S | ', 'four players: same group plays ag
 select t.expect_error(format($$select public.leave_queue(%L, %L, 'forged')$$, :'code2', t.pid(:'code2','P')), 'NOT_AUTHORIZED');
 select t.eq(t.lineup(:'code2'), 'P,Q,R,S | ', 'leave with forged token changed nothing');
 
+-- ---------- teams: partners change from game to game ----------
+-- same 4 players: over games 1-3 every possible partner pair appears exactly once
+select public.end_game(:'code2', :'key2', 2);
+select public.end_game(:'code2', :'key2', 3);
+select t.eq((
+  with pairs as (
+    select least(a, b) || '+' || greatest(a, b) as pair
+      from public.rounds r join public.sessions s on s.id = r.session_id,
+           lateral (select r.player_names[1] a, r.player_names[2] b
+                    union all select r.player_names[3], r.player_names[4]) x
+     where s.code = :'code2' and r.round_number in (1, 2, 3))
+  select count(distinct pair)::int from pairs), 6, 'teams: 3 games -> 6 different partner pairs');
+select t.eq((select cardinality(team1_ids) = 2 and cardinality(team2_ids) = 2 from public.rounds r
+              join public.sessions s on s.id = r.session_id where s.code = :'code2' and r.ended_at is null), true,
+            'teams: current game has two teams of two');
+
+-- ---------- fair random rotation with exactly 8 players ----------
+select r->>'code' as code3, r->>'admin_key' as key3 from (select public.create_session('Eight', '1234') r) x \gset
+select public.join_queue(:'code3', n) from unnest(array['A','B','C','D','E','F','G','H']) n;
+select public.start_game(:'code3', :'key3');
+select t.eq(t.lineup(:'code3'), 'A,B,C,D | E,F,G,H', 'fair: first game is the first four to join');
+select public.end_game(:'code3', :'key3', 1);
+select t.eq((select string_agg(p.name, ',' order by p.name) from public.players p join public.sessions s on s.id = p.session_id
+              where s.code = :'code3' and p.state = 'playing'), 'E,F,G,H', 'fair: those who sat out play next');
+create temp table groups (round int, names text, spread int);
+select set_config('t.code3', :'code3', false), set_config('t.key3', :'key3', false);
+do $$
+begin
+  -- play 20 more games, recording each lineup and the play-count spread
+  for i in 2..21 loop
+    insert into groups
+    select i,
+           (select string_agg(p.name, ',' order by p.name) from public.players p
+              join public.sessions s on s.id = p.session_id
+             where s.code = current_setting('t.code3') and p.state = 'playing'),
+           (select max(p.games_played) - min(p.games_played) from public.players p
+              join public.sessions s on s.id = p.session_id
+             where s.code = current_setting('t.code3'));
+    perform public.end_game(current_setting('t.code3'), current_setting('t.key3'), i);
+  end loop;
+end $$;
+select t.eq((select max(spread) from groups), 1, 'fair: nobody is ever more than 1 game ahead of anyone');
+select t.eq((select count(distinct names) > 2 from groups), true, 'fair: groups mix (more than 2 different lineups)');
+select t.eq((select not exists (
+              select 1 from groups g1
+                join groups g2 on g2.round = g1.round + 1
+                join groups g3 on g3.round = g1.round + 2,
+                unnest(string_to_array(g1.names, ',')) n
+               where n = any(string_to_array(g2.names, ',')) and n = any(string_to_array(g3.names, ',')))), true,
+            'fair: nobody plays three games in a row');
+select r->>'player_id' as late_id from (select public.join_queue(:'code3', 'Late') r) x \gset
+select t.eq((select games_played = (select min(games_played) from public.players p2
+                                      where p2.session_id = p.session_id and p2.id <> p.id)
+               from public.players p where p.id = :'late_id'), true, 'fair: newcomer starts level with the least-played');
+
 -- ---------- state snapshot ----------
-select t.eq((public.get_session_state(:'code2')->'current_round'->>'round_number')::int, 2, 'state: current round');
+select t.eq((public.get_session_state(:'code2')->'current_round'->>'round_number')::int, 4, 'state: current round');
 select t.eq(json_array_length(public.get_session_state(:'code2')->'players'), 4, 'state: players');
 select t.eq((public.get_session_state(lower(:'code2'))->'session'->>'name'), 'Small', 'state: code is case-insensitive');
 select t.eq(public.get_session_state('NOPE00')::text, null, 'state: unknown code returns null');

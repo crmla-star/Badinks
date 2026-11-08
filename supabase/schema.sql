@@ -82,6 +82,26 @@ create table if not exists public.rounds (
   ended_at      timestamptz,
   constraint rounds_unique_number unique (session_id, round_number)
 );
+-- Columns added after the first release. `add column if not exists` lets you
+-- re-run this whole file on an existing project to upgrade it.
+alter table public.sessions add column if not exists rotation_mode text not null default 'fair_random';
+alter table public.players  add column if not exists games_played int not null default 0;
+-- 1-2 = team 1, 3-4 = team 2 while on court; null while waiting
+alter table public.players  add column if not exists court_slot smallint;
+alter table public.rounds   add column if not exists team1_ids uuid[] not null default '{}';
+alter table public.rounds   add column if not exists team2_ids uuid[] not null default '{}';
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'sessions_rotation_mode_check') then
+    alter table public.sessions add constraint sessions_rotation_mode_check
+      check (rotation_mode in ('fair_random', 'fifo'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'players_court_slot_check') then
+    alter table public.players add constraint players_court_slot_check
+      check (court_slot between 1 and 4);
+  end if;
+end $$;
+
 -- at most ONE active (not ended) game per session — enforced by the database
 create unique index if not exists rounds_one_active_idx
   on public.rounds (session_id) where ended_at is null;
@@ -187,11 +207,63 @@ set search_path = pg_catalog, public
 as $$
   update public.rounds r
      set player_names = coalesce((
-           select array_agg(p.name order by p.queue_pos)
+           select array_agg(p.name order by p.court_slot nulls last, p.queue_pos)
              from public.players p
-            where p.session_id = p_session_id and p.state = 'playing'), '{}')
+            where p.session_id = p_session_id and p.state = 'playing'), '{}'),
+         team1_ids = coalesce((
+           select array_agg(p.id order by p.court_slot)
+             from public.players p
+            where p.session_id = p_session_id and p.state = 'playing' and p.court_slot in (1, 2)), '{}'),
+         team2_ids = coalesce((
+           select array_agg(p.id order by p.court_slot)
+             from public.players p
+            where p.session_id = p_session_id and p.state = 'playing' and p.court_slot in (3, 4)), '{}')
    where r.session_id = p_session_id and r.ended_at is null;
 $$;
+
+-- How many earlier games in this session had x and y as partners.
+create or replace function pbq_private.partner_count(p_session_id uuid, x uuid, y uuid)
+returns int language sql stable
+set search_path = pg_catalog, public
+as $$
+  select count(*)::int from public.rounds r
+   where r.session_id = p_session_id
+     and ((x = any(r.team1_ids) and y = any(r.team1_ids))
+       or (x = any(r.team2_ids) and y = any(r.team2_ids)));
+$$;
+
+-- Splits the 4 players on court into two teams, choosing the pairing whose
+-- partners have played together least often this session (ties: random).
+create or replace function pbq_private.assign_teams(p_session_id uuid)
+returns void language plpgsql
+set search_path = pg_catalog, public, pbq_private
+as $$
+declare
+  v_ids   uuid[];
+  -- the 3 ways to split players 1-4 into two pairs: (a,b) vs (c,d)
+  v_pairs constant int[] := array[1,2,3,4, 1,3,2,4, 1,4,2,3];
+  v_best  int := 1;
+  v_low   int := null;
+  v_score int;
+begin
+  select array_agg(id order by random()) into v_ids
+    from public.players where session_id = p_session_id and state = 'playing';
+  if coalesce(array_length(v_ids, 1), 0) <> 4 then
+    update public.players p set court_slot = o.rn
+      from (select id, row_number() over (order by queue_pos) as rn
+              from public.players where session_id = p_session_id and state = 'playing') o
+     where p.id = o.id;
+    return;
+  end if;
+  for i in 0..2 loop
+    v_score := pbq_private.partner_count(p_session_id, v_ids[v_pairs[i*4+1]], v_ids[v_pairs[i*4+2]])
+             + pbq_private.partner_count(p_session_id, v_ids[v_pairs[i*4+3]], v_ids[v_pairs[i*4+4]]);
+    if v_low is null or v_score < v_low then v_low := v_score; v_best := i; end if;
+  end loop;
+  for k in 1..4 loop
+    update public.players set court_slot = k where id = v_ids[v_pairs[v_best*4+k]];
+  end loop;
+end $$;
 
 -- If a game is running with fewer than 4 players (someone left), pull the
 -- next waiting players in from the front of the queue.
@@ -199,20 +271,24 @@ create or replace function pbq_private.fill_game(p_session_id uuid)
 returns void language plpgsql
 set search_path = pg_catalog, public, pbq_private
 as $$
-declare v_missing int;
+declare v_slot int;
 begin
   if not exists (select 1 from public.rounds where session_id = p_session_id and ended_at is null) then
     return;
   end if;
-  select 4 - count(*) into v_missing from public.players
-   where session_id = p_session_id and state = 'playing';
-  if v_missing > 0 then
-    update public.players set state = 'playing'
-     where id in (select id from public.players
-                   where session_id = p_session_id and state = 'waiting'
-                   order by queue_pos limit v_missing);
-    perform pbq_private.sync_round_names(p_session_id);
-  end if;
+  for v_slot in
+    select g from generate_series(1, 4) g
+     where g not in (select court_slot from public.players
+                      where session_id = p_session_id and state = 'playing' and court_slot is not null)
+     order by g
+  loop
+    update public.players set state = 'playing', court_slot = v_slot
+     where id = (select id from public.players
+                  where session_id = p_session_id and state = 'waiting'
+                  order by queue_pos limit 1);
+    exit when not found;
+  end loop;
+  perform pbq_private.sync_round_names(p_session_id);
 end $$;
 
 -- Starts a game with the first 4 waiting players if allowed. Returns true if
@@ -235,6 +311,7 @@ begin
    where id in (select id from public.players
                  where session_id = p_session.id and state = 'waiting'
                  order by queue_pos limit 4);
+  perform pbq_private.assign_teams(p_session.id);
 
   update public.sessions set round_count = round_count + 1
    where id = p_session.id returning round_count into v_round;
@@ -328,8 +405,12 @@ begin
   end if;
 
   select coalesce(max(queue_pos), 0) + 1 into v_pos from public.players where session_id = v_s.id;
-  insert into public.players (session_id, name, queue_pos) values (v_s.id, v_name, v_pos)
-    returning id into v_id;
+  -- newcomers count as having played as many games as the least-played player,
+  -- so in "fair random" mode they neither jump ahead nor wait extra
+  insert into public.players (session_id, name, queue_pos, games_played)
+  values (v_s.id, v_name, v_pos,
+          coalesce((select min(games_played) from public.players where session_id = v_s.id), 0))
+  returning id into v_id;
 
   v_token := pbq_private.random_token(24);
   insert into pbq_private.player_tokens (player_id, token_hash)
@@ -418,13 +499,29 @@ begin
   perform pbq_private.sync_round_names(v_s.id);
   update public.rounds set ended_at = now() where id = v_round.id;
 
+  update public.players set games_played = games_played + 1
+   where session_id = v_s.id and state = 'playing';
+
   select coalesce(max(queue_pos), 0) into v_max from public.players where session_id = v_s.id;
-  update public.players p
-     set state = 'waiting', queue_pos = v_max + o.rn
-    from (select id, row_number() over (order by queue_pos) as rn
-            from public.players
-           where session_id = v_s.id and state = 'playing') o
-   where p.id = o.id;
+  if v_s.rotation_mode = 'fifo' then
+    -- classic: the 4 who played go to the back, in order
+    update public.players p
+       set state = 'waiting', court_slot = null, queue_pos = v_max + o.rn
+      from (select id, row_number() over (order by queue_pos) as rn
+              from public.players
+             where session_id = v_s.id and state = 'playing') o
+     where p.id = o.id;
+  else
+    -- fair random: re-order everyone by games played (fewest first), ties at random
+    update public.players set state = 'waiting', court_slot = null
+     where session_id = v_s.id and state = 'playing';
+    update public.players p
+       set queue_pos = v_max + o.rn
+      from (select id, row_number() over (order by games_played, random()) as rn
+              from public.players
+             where session_id = v_s.id) o
+     where p.id = o.id;
+  end if;
 
   v_started := pbq_private.try_start(v_s);
   perform pbq_private.bump(v_s.id);
@@ -439,6 +536,20 @@ declare v_s public.sessions;
 begin
   v_s := pbq_private.lock_session_admin(p_code, p_admin_key);
   update public.sessions set is_paused = coalesce(p_paused, false) where id = v_s.id;
+  perform pbq_private.bump(v_s.id);
+end $$;
+
+-- 'fair_random' (fewest games first, ties random) or 'fifo' (4 off, 4 on).
+-- Takes effect when the current game ends.
+create or replace function public.set_rotation_mode(p_code text, p_admin_key text, p_mode text)
+returns void language plpgsql security definer
+set search_path = pg_catalog, public, pbq_private
+as $$
+declare v_s public.sessions;
+begin
+  v_s := pbq_private.lock_session_admin(p_code, p_admin_key);
+  if p_mode not in ('fair_random', 'fifo') then perform pbq_private.fail('INVALID_MODE'); end if;
+  update public.sessions set rotation_mode = p_mode where id = v_s.id;
   perform pbq_private.bump(v_s.id);
 end $$;
 
@@ -502,7 +613,7 @@ declare v_s public.sessions;
 begin
   v_s := pbq_private.lock_session_admin(p_code, p_admin_key);
   update public.rounds set ended_at = now() where session_id = v_s.id and ended_at is null;
-  update public.players set state = 'waiting' where session_id = v_s.id;
+  update public.players set state = 'waiting', court_slot = null where session_id = v_s.id;
   update public.sessions set status = 'closed' where id = v_s.id;
   perform pbq_private.bump(v_s.id);
 end $$;
@@ -519,11 +630,12 @@ as $$
   select case when s.id is null then null else json_build_object(
     'session', json_build_object(
       'id', s.id, 'code', s.code, 'name', s.name, 'status', s.status,
-      'is_paused', s.is_paused, 'round_count', s.round_count,
+      'is_paused', s.is_paused, 'round_count', s.round_count, 'rotation_mode', s.rotation_mode,
       'version', s.version, 'created_at', s.created_at),
     'players', coalesce((
       select json_agg(json_build_object(
                'id', p.id, 'name', p.name, 'state', p.state,
+               'games_played', p.games_played, 'court_slot', p.court_slot,
                'queue_pos', p.queue_pos, 'joined_at', p.joined_at) order by p.queue_pos)
         from public.players p where p.session_id = s.id), '[]'::json),
     'current_round', (
@@ -557,6 +669,7 @@ grant execute on function
   public.start_game(text, text),
   public.end_game(text, text, int),
   public.set_paused(text, text, boolean),
+  public.set_rotation_mode(text, text, text),
   public.skip_player(text, text, uuid),
   public.remove_player(text, text, uuid),
   public.reset_session(text, text),

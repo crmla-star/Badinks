@@ -1,4 +1,6 @@
 export type PlayerState = 'waiting' | 'playing'
+/** fair_random: fewest games first, ties random · fifo: 4 off, 4 on */
+export type RotationMode = 'fair_random' | 'fifo'
 
 export interface Player {
   id: string
@@ -6,6 +8,9 @@ export interface Player {
   state: PlayerState
   queue_pos: number
   joined_at: string
+  games_played: number
+  /** 1-2 = team 1, 3-4 = team 2 while on court */
+  court_slot: number | null
 }
 
 export interface Session {
@@ -15,6 +20,7 @@ export interface Session {
   status: 'open' | 'closed'
   is_paused: boolean
   round_count: number
+  rotation_mode: RotationMode
   version: number
   created_at: string
 }

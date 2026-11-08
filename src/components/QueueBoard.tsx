@@ -12,11 +12,13 @@ interface AdminRowActions {
 interface Props {
   view: QueueView
   phase: GamePhase
+  /** fair random: order after "up next" is reshuffled at the end of each game */
+  mixed?: boolean
   meId: string | null
   admin: AdminRowActions | null
 }
 
-export function QueueBoard({ view, phase, meId, admin }: Props) {
+export function QueueBoard({ view, phase, meId, admin, mixed }: Props) {
   return (
     <div className="space-y-4">
       <NowPlaying view={view} phase={phase} meId={meId} admin={admin} />
@@ -50,13 +52,21 @@ export function QueueBoard({ view, phase, meId, admin }: Props) {
             ))}
           </ol>
         )}
+        {mixed && view.total > 0 && (
+          <p className="mt-3 text-sm text-court-800/70">
+            🔀 Mix mode: after each game, whoever has played the fewest games goes next (ties are random), so everyone plays equally with different partners.
+          </p>
+        )}
       </Card>
     </div>
   )
 }
 
 function NowPlaying({ view, phase, meId, admin }: Props) {
-  const seats = Array.from({ length: PLAYERS_PER_GAME }, (_, i) => view.playing[i] ?? null)
+  // seats 1-2 = team 1, 3-4 = team 2; fall back to list order if slots are missing
+  const bySlot = (i: number) => view.playing.find((p) => p.court_slot === i + 1)
+  const unslotted = view.playing.filter((p) => !p.court_slot)
+  const seats = Array.from({ length: PLAYERS_PER_GAME }, (_, i) => bySlot(i) ?? unslotted.shift() ?? null)
   const active = phase.kind === 'playing'
 
   return (
@@ -74,29 +84,27 @@ function NowPlaying({ view, phase, meId, admin }: Props) {
 
       {active ? (
         <>
-          <ul className="court-lines grid grid-cols-2 gap-px overflow-hidden rounded-2xl border-2 border-white/30 bg-court-600">
-            {seats.map((p, i) => (
-              <li key={p?.id ?? `empty-${i}`} className="flex min-h-20 items-center justify-between gap-1 p-3">
-                {p ? (
-                  <>
-                    <span className="min-w-0">
-                      <span className="block truncate text-xl font-bold leading-tight">{p.name}</span>
-                      {p.id === meId && (
-                        <span className="mt-1 inline-block rounded-full bg-ball-400 px-2 py-0.5 text-xs font-bold text-court-900">You</span>
-                      )}
-                    </span>
-                    {admin && (
-                      <IconButton label={`Remove ${p.name}`} onClick={() => admin.onRemove(p)} disabled={admin.busy} light>
-                        <XIcon />
-                      </IconButton>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-base font-medium text-court-100/70">Open seat</span>
+          <div className="overflow-hidden rounded-2xl border-2 border-white/30 bg-court-600">
+            {[0, 1].map((team) => (
+              <div key={team}>
+                {team === 1 && (
+                  <div className="flex items-center gap-2 px-3" aria-hidden="true">
+                    <span className="h-0.5 flex-1 bg-white/40" />
+                    <span className="text-[11px] font-black tracking-[0.2em] text-ball-300">VS</span>
+                    <span className="h-0.5 flex-1 bg-white/40" />
+                  </div>
                 )}
-              </li>
+                <div className="px-3 pt-2 text-[11px] font-bold tracking-[0.14em] text-court-100/80 uppercase">
+                  Team {team + 1}
+                </div>
+                <ul className="grid grid-cols-2 gap-px" aria-label={`Team ${team + 1}`}>
+                  {seats.slice(team * 2, team * 2 + 2).map((p, i) => (
+                    <Seat key={p?.id ?? `empty-${team}-${i}`} p={p} meId={meId} admin={admin} />
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
           {phase.short && (
             <p className="mt-3 text-sm text-court-100">
               A seat is open — the next player to join fills it automatically.
@@ -110,6 +118,30 @@ function NowPlaying({ view, phase, meId, admin }: Props) {
         </div>
       )}
     </section>
+  )
+}
+
+function Seat({ p, meId, admin }: { p: QueuedPlayer | null; meId: string | null; admin: AdminRowActions | null }) {
+  return (
+    <li className="flex min-h-16 items-center justify-between gap-1 px-3 pb-3">
+      {p ? (
+        <>
+          <span className="min-w-0">
+            <span className="block truncate text-xl leading-tight font-bold">{p.name}</span>
+            {p.id === meId && (
+              <span className="mt-1 inline-block rounded-full bg-ball-400 px-2 py-0.5 text-xs font-bold text-court-900">You</span>
+            )}
+          </span>
+          {admin && (
+            <IconButton label={`Remove ${p.name}`} onClick={() => admin.onRemove(p)} disabled={admin.busy} light>
+              <XIcon />
+            </IconButton>
+          )}
+        </>
+      ) : (
+        <span className="text-base font-medium text-court-100/70">Open seat</span>
+      )}
+    </li>
   )
 }
 

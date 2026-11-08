@@ -7,7 +7,7 @@ import { Button, Card, Logo, Spinner } from '../components/ui'
 import { useAction } from '../hooks/useAction'
 import { useSessionState, type LiveStatus } from '../hooks/useSessionState'
 import { api, type ApiError } from '../lib/api'
-import { describeMe, gamePhase, splitQueue, type GamePhase } from '../lib/queue'
+import { describeMe, formatMatchup, gamePhase, splitQueue, type GamePhase } from '../lib/queue'
 import { navigate, sessionUrl } from '../lib/router'
 import { copyLink, shareLink } from '../lib/share'
 import { storage, type MyPlayer } from '../lib/storage'
@@ -156,6 +156,11 @@ export function SessionPage({ code }: { code: string }) {
             <OrganizerPanel
               phase={phase}
               paused={session.is_paused}
+              rotationMode={session.rotation_mode}
+              onSetRotation={(mode) =>
+                fire('rotation', () => api.setRotationMode(code, adminKey, mode),
+                  mode === 'fifo' ? 'Rotation: classic 4 off, 4 on' : 'Rotation: mix it up')
+              }
               pending={pending}
               onStart={() => fire('start', () => api.startGame(code, adminKey), 'Game on! 🎉')}
               onEnd={() => {
@@ -164,12 +169,17 @@ export function SessionPage({ code }: { code: string }) {
                 const onCourt = view.playing.map((p) => p.name)
                 const nextUp = view.upNext.map((p) => p.name)
                 const startsNext = !session.is_paused && view.playing.length + view.upNext.length + view.waiting.length >= 4
+                const mixed = session.rotation_mode === 'fair_random'
                 setConfirm({
                   title: `End game ${round}?`,
-                  body: `${onCourt.join(', ') || 'The players on court'} move to the back of the line.` +
-                    (startsNext
-                      ? ` Next on court: ${(nextUp.length >= 4 ? nextUp : [...nextUp, ...onCourt].slice(0, 4)).join(', ')}.`
-                      : session.is_paused ? ' The queue is paused, so the next game won’t start yet.' : ''),
+                  body: (mixed
+                    ? `${onCourt.join(', ') || 'The players on court'} come off.` +
+                      (startsNext ? ' The next four are picked from whoever has played the fewest games, with new teams.' : '')
+                    : `${onCourt.join(', ') || 'The players on court'} move to the back of the line.` +
+                      (startsNext
+                        ? ` Next on court: ${(nextUp.length >= 4 ? nextUp : [...nextUp, ...onCourt].slice(0, 4)).join(', ')}.`
+                        : '')) +
+                    (session.is_paused ? ' The queue is paused, so the next game won’t start yet.' : ''),
                   confirmLabel: 'End game',
                   tone: 'court',
                   onConfirm: () =>
@@ -221,7 +231,7 @@ export function SessionPage({ code }: { code: string }) {
 
         {/* Live queue column */}
         <div className="mt-6 lg:mt-0">
-          <QueueBoard view={view} phase={phase} meId={me?.id ?? null} admin={admin} />
+          <QueueBoard view={view} phase={phase} meId={me?.id ?? null} admin={admin} mixed={session.rotation_mode === 'fair_random'} />
 
           {state.recent_rounds.length > 0 && (
             <details className="mt-4 rounded-3xl bg-white px-5 py-1 ring-1 ring-court-900/5">
@@ -233,7 +243,7 @@ export function SessionPage({ code }: { code: string }) {
                 {state.recent_rounds.map((r) => (
                   <li key={r.round_number} className="text-sm">
                     <span className="font-bold text-court-800">Game {r.round_number}:</span>{' '}
-                    <span className="text-court-900/80">{r.player_names.join(', ') || '—'}</span>
+                    <span className="text-court-900/80">{formatMatchup(r.player_names) || '—'}</span>
                   </li>
                 ))}
               </ol>

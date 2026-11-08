@@ -19,6 +19,7 @@ export function splitQueue(players: Player[]): QueueView {
   const sorted = [...players].sort((a, b) => a.queue_pos - b.queue_pos)
   const playing = sorted
     .filter((p) => p.state === 'playing')
+    .sort((a, b) => (a.court_slot ?? 9) - (b.court_slot ?? 9))
     .map((p) => ({ ...p, position: null }))
   const inLine = sorted
     .filter((p) => p.state === 'waiting')
@@ -50,6 +51,17 @@ export function gamePhase(state: SessionState): GamePhase {
   const waiting = players.filter((p) => p.state === 'waiting').length
   if (waiting >= PLAYERS_PER_GAME) return { kind: 'ready' }
   return { kind: 'needPlayers', missing: PLAYERS_PER_GAME - waiting }
+}
+
+/** Splits a round's names (stored team 1 first, then team 2) into two teams. */
+export function teamsOf(names: string[]): [string[], string[]] | null {
+  return names.length === 4 ? [names.slice(0, 2), names.slice(2, 4)] : null
+}
+
+/** "Ava & Ben vs Cy & Dee" */
+export function formatMatchup(names: string[]) {
+  const t = teamsOf(names)
+  return t ? `${t[0].join(' & ')} vs ${t[1].join(' & ')}` : names.join(', ')
 }
 
 /** What a specific player should see about themselves. */

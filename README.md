@@ -21,12 +21,28 @@ A small, mobile-first web app for running a friendly pickleball court: friends o
 
 ### Queue rules
 
-1. Players are ordered by when they joined.
-2. **Start game** puts the first 4 waiting players on court. If fewer than 4 are waiting, the app shows a waiting state.
-3. **End game** moves those 4 to the **back** of the line (keeping their order), and the next 4 start **automatically**. If the queue is paused, the next game does not start automatically.
-4. New players always join the back. A name can appear only once per session (case- and space-insensitive).
-5. **Skip** moves a waiting player back one spot. **Remove** (or a player leaving) frees their seat; if they were on court, the next player in line fills it.
-6. **End game** asks for confirmation and shows who goes on court next, so a stray tap can't end a game by accident.
+Each session has a **rotation mode**. The organizer can change it under **Session settings → Rotation**, and the change applies when the current game ends.
+
+**Mix it up** (default): mixes players and teams, which matters when you're exactly 8 people.
+1. The first game is the first 4 players to join.
+2. When a game ends, everyone is re-ordered by **games played (fewest first)**, with ties broken at random. The next 4 go on court automatically.
+3. Everyone plays the same number of games (never more than 1 apart), and groups change over time.
+4. With 8 players, groups can only mix if some players occasionally play 2 games in a row and then sit out 2. Nobody ever plays 3 in a row.
+5. New players start level with the least-played player, so they neither jump the line nor wait extra.
+
+**Classic 4 off, 4 on**: strict first-in, first-out.
+1. **Start game** puts the first 4 waiting players on court.
+2. **End game** moves those 4 to the **back** of the line, keeping their order, and the next 4 start automatically.
+
+**Both modes:**
+- **Teams:** the court shows **Team 1 vs Team 2**. Partners are chosen so that people who have partnered least this session play together, so teams change from game to game.
+- **Joining:** new players join the back. A name can appear only once per session (case- and space-insensitive).
+- **Skip and remove:** skip moves a waiting player back one spot. If a player on court is removed or leaves, the next player in line takes their seat.
+- **Fewer than 4 waiting:** the app shows a waiting state instead of starting.
+- **Pause:** while the queue is paused, ending a game does not start the next one.
+- **End game** asks for confirmation, so a stray tap can't end a game.
+
+**Upgrading an existing Supabase project:** re-run the whole `supabase/schema.sql` in the SQL editor. It only adds what's missing and keeps your data and PIN.
 
 ### Security model
 

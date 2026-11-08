@@ -1,4 +1,4 @@
-insert into public.sessions (code, name) values ('CONCUR', 'Concurrency');
+insert into public.sessions (code, name, rotation_mode) values ('CONCUR', 'Concurrency', 'fifo');
 insert into pbq_private.session_secrets
   select id, pbq_private.hash_token('concur-key') from public.sessions where code = 'CONCUR';
 set role anon;
