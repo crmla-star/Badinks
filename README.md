@@ -26,7 +26,7 @@ A small, mobile-first web app for running a friendly pickleball court: friends o
 3. **End game** moves those 4 to the **back** of the line (keeping their order), and the next 4 start **automatically**. If the queue is paused, the next game does not start automatically.
 4. New players always join the back. A name can appear only once per session (case- and space-insensitive).
 5. **Skip** moves a waiting player back one spot. **Remove** (or a player leaving) frees their seat; if they were on court, the next player in line fills it.
-6. A game can't be ended within 10 seconds of starting. This stops an accidental double tap from ending the game that just began.
+6. **End game** asks for confirmation and shows who goes on court next, so a stray tap can't end a game by accident.
 
 ### Security model
 

@@ -40,9 +40,6 @@ create function t.pid(p_code text, p_name text) returns uuid language sql as $$
 $$;
 grant execute on all functions in schema t to anon;
 
--- the tests end games immediately, so lift the minimum game length for now
-create or replace function pbq_private.min_round_seconds() returns int language sql immutable as $$ select 0 $$;
-
 set client_min_messages = notice;
 set role anon;
 
@@ -95,16 +92,6 @@ select t.eq(public.end_game(:'code', :'key', 1)::jsonb, '{"next_started": true}'
 select t.eq(t.lineup(:'code'), 'E,F,G,H | I,Ava,J,A,B,C,D', 'finished players moved to back in order; next four playing');
 select t.expect_error(format($$select public.end_game(%L, %L, 1)$$, :'code', :'key'), 'ROUND_ALREADY_ENDED');
 select t.eq(t.lineup(:'code'), 'E,F,G,H | I,Ava,J,A,B,C,D', 'repeated end_game did not advance twice');
-
--- ---------- double tap: ending the game that just started is refused ----------
-reset role;
-create or replace function pbq_private.min_round_seconds() returns int language sql immutable as $$ select 10 $$;
-set role anon;
-select t.expect_error(format($$select public.end_game(%L, %L, 2)$$, :'code', :'key'), 'ROUND_TOO_NEW');
-select t.eq(t.lineup(:'code'), 'E,F,G,H | I,Ava,J,A,B,C,D', 'tap on a brand-new game did nothing');
-reset role;
-create or replace function pbq_private.min_round_seconds() returns int language sql immutable as $$ select 0 $$;
-set role anon;
 
 -- ---------- skip ----------
 select public.skip_player(:'code', :'key', t.pid(:'code', 'I'));

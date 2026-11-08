@@ -161,9 +161,22 @@ export function SessionPage({ code }: { code: string }) {
               onEnd={() => {
                 const round = state.current_round?.round_number
                 if (round === undefined) return
-                fire('end', async () => {
-                  const r = await api.endGame(code, adminKey, round)
-                  showToast(r.next_started ? 'Next four are on court!' : 'Game ended', 'success')
+                const onCourt = view.playing.map((p) => p.name)
+                const nextUp = view.upNext.map((p) => p.name)
+                const startsNext = !session.is_paused && view.playing.length + view.upNext.length + view.waiting.length >= 4
+                setConfirm({
+                  title: `End game ${round}?`,
+                  body: `${onCourt.join(', ') || 'The players on court'} move to the back of the line.` +
+                    (startsNext
+                      ? ` Next on court: ${(nextUp.length >= 4 ? nextUp : [...nextUp, ...onCourt].slice(0, 4)).join(', ')}.`
+                      : session.is_paused ? ' The queue is paused, so the next game won’t start yet.' : ''),
+                  confirmLabel: 'End game',
+                  tone: 'court',
+                  onConfirm: () =>
+                    fire('end', async () => {
+                      const r = await api.endGame(code, adminKey, round)
+                      showToast(r.next_started ? 'Next four are on court!' : 'Game ended', 'success')
+                    }),
                 })
               }}
               onTogglePause={() =>

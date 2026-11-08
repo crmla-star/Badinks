@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import type { GamePhase } from '../lib/queue'
 import { Button, Card } from './ui'
 
@@ -31,7 +30,9 @@ export function OrganizerPanel(p: Props) {
       {!closed && (
         <>
           {p.phase.kind === 'playing' ? (
-            <EndGameButton key={p.phase.round} round={p.phase.round} onEnd={p.onEnd} pending={p.pending} />
+            <Button variant="court" size="lg" block onClick={p.onEnd} loading={p.pending === 'end'} disabled={busy}>
+              End game {p.phase.round}
+            </Button>
           ) : (
             <Button
               size="lg"
@@ -82,24 +83,6 @@ export function OrganizerPanel(p: Props) {
         </div>
       </details>
     </Card>
-  )
-}
-
-/**
- * Disabled for a moment after a new game appears, so a double tap on
- * "End game" (or "Start" → "End", same spot) can't end the game that just
- * started. The server enforces the same rule.
- */
-function EndGameButton({ round, onEnd, pending }: { round: number; onEnd: () => void; pending: string | null }) {
-  const [cooling, setCooling] = useState(true)
-  useEffect(() => {
-    const t = window.setTimeout(() => setCooling(false), 3000)
-    return () => window.clearTimeout(t)
-  }, [])
-  return (
-    <Button variant="court" size="lg" block onClick={onEnd} loading={pending === 'end'} disabled={pending !== null || cooling}>
-      End game {round}
-    </Button>
   )
 }
 

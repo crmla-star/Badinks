@@ -15,7 +15,6 @@ const MESSAGES: Record<string, string> = {
   GAME_IN_PROGRESS: 'A game is already in progress.',
   NOT_ENOUGH_PLAYERS: 'Need at least 4 waiting players to start.',
   ROUND_ALREADY_ENDED: 'That game was already ended.',
-  ROUND_TOO_NEW: 'This game just started — you can end it in a few seconds.',
   PLAYER_NOT_FOUND: 'That player is no longer in the queue.',
   PLAYER_IS_PLAYING: "That player is on court — they can't be skipped.",
   ALREADY_LAST: 'That player is already last in line.',

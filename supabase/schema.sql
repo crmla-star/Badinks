@@ -174,12 +174,6 @@ begin
   return v;
 end $$;
 
--- A game can't be ended within this many seconds of starting. This stops an
--- accidental double tap on "End game" (or "Start" then "End", which sit in
--- the same spot) from ending the game that just started.
-create or replace function pbq_private.min_round_seconds()
-returns int language sql immutable as $$ select 10 $$;
-
 create or replace function pbq_private.bump(p_session_id uuid)
 returns void language sql
 set search_path = pg_catalog, public
@@ -403,8 +397,7 @@ end $$;
 -- (keeping their relative order) and the next 4 start automatically unless the
 -- queue is paused. Passing the round number makes this idempotent: a second
 -- click for the same round fails with ROUND_ALREADY_ENDED instead of
--- advancing the queue again, and a click on the *new* round within
--- min_round_seconds() fails with ROUND_TOO_NEW.
+-- advancing the queue again. (The app also asks for confirmation first.)
 create or replace function public.end_game(p_code text, p_admin_key text, p_round_number int)
 returns json language plpgsql security definer
 set search_path = pg_catalog, public, pbq_private
@@ -420,9 +413,6 @@ begin
    where session_id = v_s.id and ended_at is null;
   if not found or v_round.round_number <> p_round_number then
     perform pbq_private.fail('ROUND_ALREADY_ENDED');
-  end if;
-  if v_round.started_at > now() - make_interval(secs => pbq_private.min_round_seconds()) then
-    perform pbq_private.fail('ROUND_TOO_NEW');
   end if;
 
   perform pbq_private.sync_round_names(v_s.id);

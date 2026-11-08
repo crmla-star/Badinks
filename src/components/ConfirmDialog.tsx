@@ -5,6 +5,8 @@ export interface ConfirmRequest {
   title: string
   body: string
   confirmLabel: string
+  /** 'danger' (red) for destructive actions, 'court' (green) for normal ones */
+  tone?: 'danger' | 'court'
   onConfirm: () => void
 }
 
@@ -33,8 +35,8 @@ export function ConfirmDialog({ request, onClose }: { request: ConfirmRequest | 
           <div className="mt-6 grid grid-cols-2 gap-3">
             <Button variant="outline" onClick={onClose} autoFocus>Cancel</Button>
             <Button
-              className="bg-red-600! text-white! ring-0! hover:bg-red-700!"
-              variant="danger"
+              className={request.tone === 'court' ? '' : 'bg-red-600! text-white! ring-0! hover:bg-red-700!'}
+              variant={request.tone === 'court' ? 'court' : 'danger'}
               onClick={() => {
                 request.onConfirm()
                 onClose()

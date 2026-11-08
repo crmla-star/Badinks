@@ -1,4 +1,3 @@
-create or replace function pbq_private.min_round_seconds() returns int language sql immutable as $$ select 0 $$;
 insert into public.sessions (code, name) values ('CONCUR', 'Concurrency');
 insert into pbq_private.session_secrets
   select id, pbq_private.hash_token('concur-key') from public.sessions where code = 'CONCUR';
