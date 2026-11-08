@@ -1,6 +1,6 @@
 import { Card, Logo } from './components/ui'
 import { ToastHost } from './components/ToastHost'
-import { isConfigured } from './lib/supabase'
+import { configProblem, isConfigured } from './lib/supabase'
 import { usePath } from './lib/router'
 import { HomePage } from './pages/HomePage'
 import { SessionPage } from './pages/SessionPage'
@@ -14,9 +14,10 @@ export default function App() {
         <Card>
           <Logo />
           <p className="mt-4 font-bold">Supabase is not configured.</p>
-          <p className="mt-1 text-court-800/80">
-            Copy <code>.env.example</code> to <code>.env.local</code>, fill in your project URL and anon key,
-            then restart the dev server.
+          <p className="mt-2 rounded-xl bg-red-50 p-3 text-sm font-medium break-words text-red-800">{configProblem}</p>
+          <p className="mt-3 text-court-800/80">
+            On Vercel: Project → Settings → Environment Variables, fix the value, then redeploy.
+            Locally: edit <code>.env.local</code> and restart the dev server.
           </p>
         </Card>
       </div>

@@ -74,3 +74,19 @@ describe('describeMe', () => {
     expect(describeMe(v, null, true)).toBeNull()
   })
 })
+
+describe('normalizeSupabaseUrl', async () => {
+  const { normalizeSupabaseUrl } = await import('./supabase')
+  it('accepts common paste variants', () => {
+    for (const v of [
+      'https://abc.supabase.co', 'abc.supabase.co', '  https://abc.supabase.co/ ', '"https://abc.supabase.co"',
+      'https://abc.supabase.co/rest/v1/',
+    ]) expect(normalizeSupabaseUrl(v)).toBe('https://abc.supabase.co')
+  })
+  it('rejects garbage', () => {
+    expect(normalizeSupabaseUrl('')).toBeNull()
+    expect(normalizeSupabaseUrl(undefined)).toBeNull()
+    expect(normalizeSupabaseUrl('eyJhbGciOi')).toBeNull()
+    expect(normalizeSupabaseUrl('not a url')).toBeNull()
+  })
+})
